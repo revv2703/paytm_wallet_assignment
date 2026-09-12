@@ -1,4 +1,13 @@
 package com.paytm.wallet.common.dto;
 
-public record TransferResponse(String id, String from, String to, Long amountPaise, String status, String idempotencyKey) {
+import com.fasterxml.jackson.annotation.JsonProperty;
+
+public record TransferResponse(
+        @JsonProperty("id") String id,
+        @JsonProperty("from") String from,
+        @JsonProperty("to") String to,
+        @JsonProperty("amount_paise") Long amountPaise,
+        @JsonProperty("status") String status,
+        @JsonProperty("idempotency_key") String idempotencyKey
+) {
 }

@@ -1,9 +1,8 @@
 package com.paytm.wallet.common.dto;
 
-import jakarta.validation.constraints.NotBlank;
+import com.fasterxml.jackson.annotation.JsonProperty;
 
 public record CreateWalletRequest(
-        @NotBlank(message = "User id is required")
-        String userId
+        @JsonProperty("user_id") String userId
 ) {
 }

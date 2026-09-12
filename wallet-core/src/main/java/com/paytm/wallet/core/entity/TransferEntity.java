@@ -2,8 +2,6 @@ package com.paytm.wallet.core.entity;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.time.Instant;
@@ -13,31 +11,32 @@ import java.time.Instant;
 public class TransferEntity {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
+    @Column(name = "transfer_id", nullable = false, unique = true)
+    private String transferId;
 
-    @Column(nullable = false)
+    @Column(name = "from_wallet_id", nullable = false)
     private String fromWalletId;
 
-    @Column(nullable = false)
+    @Column(name = "to_wallet_id", nullable = false)
     private String toWalletId;
 
-    @Column(nullable = false)
+    @Column(name = "amount_paise", nullable = false)
     private Long amountPaise;
 
-    @Column(nullable = false, unique = true)
+    @Column(name = "idempotency_key", nullable = false, unique = true)
     private String idempotencyKey;
 
-    @Column(nullable = false)
+    @Column(name = "status", nullable = false)
     private String status;
 
-    @Column(nullable = false)
+    @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
     public TransferEntity() {
     }
 
-    public TransferEntity(String fromWalletId, String toWalletId, Long amountPaise, String idempotencyKey, String status, Instant createdAt) {
+    public TransferEntity(String transferId, String fromWalletId, String toWalletId, Long amountPaise, String idempotencyKey, String status, Instant createdAt) {
+        this.transferId = transferId;
         this.fromWalletId = fromWalletId;
         this.toWalletId = toWalletId;
         this.amountPaise = amountPaise;
@@ -46,8 +45,12 @@ public class TransferEntity {
         this.createdAt = createdAt;
     }
 
-    public Long getId() {
-        return id;
+    public String getTransferId() {
+        return transferId;
+    }
+
+    public void setTransferId(String transferId) {
+        this.transferId = transferId;
     }
 
     public String getFromWalletId() {

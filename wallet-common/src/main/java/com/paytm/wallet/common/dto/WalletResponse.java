@@ -1,4 +1,11 @@
 package com.paytm.wallet.common.dto;
 
-public record WalletResponse(String id, String userId, Long balancePaise, String status) {
+import com.fasterxml.jackson.annotation.JsonProperty;
+
+public record WalletResponse(
+        @JsonProperty("id") String id,
+        @JsonProperty("user_id") String userId,
+        @JsonProperty("balance_paise") Long balancePaise,
+        @JsonProperty("status") String status
+) {
 }
