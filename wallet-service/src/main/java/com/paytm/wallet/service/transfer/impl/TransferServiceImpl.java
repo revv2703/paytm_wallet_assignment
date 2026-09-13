@@ -8,9 +8,21 @@ import com.paytm.wallet.core.entity.TransferEntity;
 import com.paytm.wallet.core.entity.WalletEntity;
 import com.paytm.wallet.core.repository.TransferRepository;
 import com.paytm.wallet.core.repository.WalletRepository;
-import com.paytm.wallet.service.transfer.TransferService;
-import com.paytm.wallet.service.mapper.TransferMapper;
 import com.paytm.wallet.service.idempotency.IdempotencyService;
+import com.paytm.wallet.service.mapper.TransferMapper;
+import com.paytm.wallet.service.metrics.WalletMetricsService;
+import com.paytm.wallet.service.transfer.TransferService;
+import io.micrometer.core.instrument.Timer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.cache.CacheManager;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpStatus;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
 import java.time.Clock;
 import java.time.Instant;
 import java.util.Comparator;
@@ -21,18 +33,6 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
-import org.springframework.cache.Cache;
-import org.springframework.cache.CacheManager;
-
-import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.http.HttpStatus;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 @Service
 public class TransferServiceImpl implements TransferService {
@@ -44,100 +44,135 @@ public class TransferServiceImpl implements TransferService {
     private final IdempotencyService idempotencyService;
     private final Clock clock;
     private final Optional<CacheManager> cacheManager;
+    private final WalletMetricsService walletMetricsService;
 
-    public TransferServiceImpl(WalletRepository walletRepository, TransferRepository transferRepository, IdempotencyService idempotencyService, Clock clock, Optional<CacheManager> cacheManager) {
+    public TransferServiceImpl(WalletRepository walletRepository, TransferRepository transferRepository, IdempotencyService idempotencyService, Clock clock, Optional<CacheManager> cacheManager, WalletMetricsService walletMetricsService) {
         this.walletRepository = walletRepository;
         this.transferRepository = transferRepository;
         this.idempotencyService = idempotencyService;
         this.clock = clock;
         this.cacheManager = cacheManager;
+        this.walletMetricsService = walletMetricsService;
     }
 
     @Override
     @Transactional
     public TransferResponse createTransfer(CreateTransferRequest request) {
-        if (request == null) {
-            logger.warn("createTransfer called with null request");
-            throw new ApiException(Constants.TRANSFER_REQUEST_REQUIRED, HttpStatus.BAD_REQUEST);
-        }
-        if (Objects.equals(request.from(), request.to())) {
-            logger.warn("createTransfer validation failed: sender and receiver are same: {}", request.from());
-            throw new ApiException(Constants.TRANSFER_SENDER_RECEIVER_SAME, HttpStatus.BAD_REQUEST);
-        }
+        walletMetricsService.incrementTransferRequest();
+        Timer.Sample sample = walletMetricsService.startTransferTimer();
 
-        String idempotencyKey = request.idempotencyKey().trim();
-        logger.info("createTransfer request idempotencyKey={} from={} to={} amount={}", idempotencyKey, request.from(), request.to(), request.amountPaise());
-
-        Optional<TransferEntity> existingTransfer = idempotencyService.findByIdempotencyKey(idempotencyKey);
-        if (existingTransfer.isPresent()) {
-            logger.info("Existing transfer found for idempotencyKey={}", idempotencyKey);
-            TransferEntity transfer = existingTransfer.get();
-            if (!Objects.equals(transfer.getFromWalletId(), request.from())
-                    || !Objects.equals(transfer.getToWalletId(), request.to())
-                    || !Objects.equals(transfer.getAmountPaise(), request.amountPaise())) {
-                logger.warn("Idempotency key conflict for key={}. existing(from={},to={},amount={}) vs request(from={},to={},amount={})",
-                        idempotencyKey,
-                        transfer.getFromWalletId(), transfer.getToWalletId(), transfer.getAmountPaise(),
-                        request.from(), request.to(), request.amountPaise());
-                throw new ApiException(Constants.TRANSFER_IDEMPOTENCY_KEY_CONFLICT, HttpStatus.CONFLICT);
+        try {
+            if (request == null) {
+                logger.warn("createTransfer called with null request");
+                walletMetricsService.incrementTransferError();
+                throw new ApiException(Constants.TRANSFER_REQUEST_REQUIRED, HttpStatus.BAD_REQUEST);
             }
-            return TransferMapper.toResponse(transfer);
-        }
+            if (Objects.equals(request.from(), request.to())) {
+                logger.warn("createTransfer validation failed: sender and receiver are same: {}", request.from());
+                walletMetricsService.incrementTransferError();
+                throw new ApiException(Constants.TRANSFER_SENDER_RECEIVER_SAME, HttpStatus.BAD_REQUEST);
+            }
 
-        List<String> orderedWalletIds = Stream.of(request.from(), request.to())
-                .sorted(Comparator.naturalOrder())
-                .distinct()
-                .toList();
+            String idempotencyKey = request.idempotencyKey().trim();
+            logger.info("createTransfer request idempotencyKey={} from={} to={} amount={}", idempotencyKey, request.from(), request.to(), request.amountPaise());
 
-        List<WalletEntity> walletEntities = walletRepository.findAllByWalletIdInForUpdate(orderedWalletIds);
-        Map<String, WalletEntity> walletMap = walletEntities.stream()
-                .collect(Collectors.toMap(WalletEntity::getWalletId, wallet -> wallet));
+            List<String> orderedWalletIds = Stream.of(request.from(), request.to())
+                    .sorted(Comparator.naturalOrder())
+                    .distinct()
+                    .toList();
 
-        WalletEntity fromWallet = walletMap.get(request.from());
-        WalletEntity toWallet = walletMap.get(request.to());
-        if (fromWallet == null || toWallet == null) {
-            throw new ApiException(Constants.WALLET_NOT_FOUND, HttpStatus.NOT_FOUND);
-        }
+            List<WalletEntity> walletEntities = walletRepository.findAllByWalletIdInForUpdate(orderedWalletIds);
+            Map<String, WalletEntity> walletMap = walletEntities.stream()
+                    .collect(Collectors.toMap(WalletEntity::getWalletId, wallet -> wallet));
 
-        if (fromWallet.getBalancePaise() < request.amountPaise()) {
-            String reason = Constants.TRANSFER_INSUFFICIENT_BALANCE;
-            TransferEntity declined = new TransferEntity(
-                    Constants.TRANSFER_ID_PREFIX + UUID.randomUUID(),
-                    request.from(),
-                    request.to(),
-                    request.amountPaise(),
-                    idempotencyKey,
-                    Constants.TRANSFER_DECLINED,
-                    Instant.now(clock)
-            );
-            declined.setDeclinedReason(reason);
-            try {
-                logger.info("Persisting declined transfer for idempotencyKey={} due to insufficient balance", idempotencyKey);
-                return TransferMapper.toResponse(transferRepository.saveAndFlush(declined));
-            } catch (DataIntegrityViolationException ex) {
-                logger.error("Failed to save declined transfer for idempotencyKey={}", idempotencyKey, ex);
-                Optional<TransferEntity> existing = idempotencyService.findByIdempotencyKey(idempotencyKey);
-                if (existing.isPresent()) {
-                    return TransferMapper.toResponse(existing.get());
+            WalletEntity fromWallet = walletMap.get(request.from());
+            WalletEntity toWallet = walletMap.get(request.to());
+            if (fromWallet == null || toWallet == null) {
+                walletMetricsService.incrementTransferError();
+                throw new ApiException(Constants.WALLET_NOT_FOUND, HttpStatus.NOT_FOUND);
+            }
+
+            Optional<TransferEntity> existingTransfer = idempotencyService.findByIdempotencyKey(idempotencyKey);
+            if (existingTransfer.isPresent()) {
+                logger.info("Existing transfer found for idempotencyKey={} after locking wallets", idempotencyKey);
+                TransferEntity transfer = existingTransfer.get();
+                if (!Objects.equals(transfer.getFromWalletId(), request.from())
+                        || !Objects.equals(transfer.getToWalletId(), request.to())
+                        || !Objects.equals(transfer.getAmountPaise(), request.amountPaise())) {
+                    logger.warn("Idempotency key conflict for key={} (post-lock). existing(from={},to={},amount={}) vs request(from={},to={},amount={})",
+                            idempotencyKey,
+                            transfer.getFromWalletId(), transfer.getToWalletId(), transfer.getAmountPaise(),
+                            request.from(), request.to(), request.amountPaise());
+                    walletMetricsService.incrementTransferError();
+                    throw new ApiException(Constants.TRANSFER_IDEMPOTENCY_KEY_CONFLICT, HttpStatus.CONFLICT);
                 }
-                throw new ApiException(Constants.TRANSFER_CREATION_FAILED + ": failed to save declined transfer", HttpStatus.INTERNAL_SERVER_ERROR);
+                walletMetricsService.incrementTransferIdempotentReplay();
+                return TransferMapper.toResponse(transfer);
             }
+
+            if (fromWallet.getBalancePaise() < request.amountPaise()) {
+                walletMetricsService.incrementTransferDeclinedInsufficientFunds();
+                return handleInsufficientBalance(request, idempotencyKey, fromWallet, toWallet);
+            }
+
+            applyTransferBalance(fromWallet, toWallet, request.amountPaise());
+            cacheUpdatedWallets(fromWallet, toWallet);
+            return saveCompletedTransfer(request, idempotencyKey);
+        } catch (ApiException ex) {
+            logger.error("Transfer request failed: {}", ex.getMessage(), ex);
+            walletMetricsService.incrementTransferError();
+            throw ex;
+        } finally {
+            walletMetricsService.finishTransferTimer(sample);
         }
+    }
 
-        fromWallet.setBalancePaise(fromWallet.getBalancePaise() - request.amountPaise());
-        toWallet.setBalancePaise(toWallet.getBalancePaise() + request.amountPaise());
-        walletRepository.saveAll(List.of(fromWallet, toWallet));
+    private TransferResponse handleInsufficientBalance(CreateTransferRequest request, String idempotencyKey, WalletEntity fromWallet, WalletEntity toWallet) {
+        String reason = Constants.TRANSFER_INSUFFICIENT_BALANCE;
+        TransferEntity declined = new TransferEntity(
+                Constants.TRANSFER_ID_PREFIX + UUID.randomUUID(),
+                request.from(),
+                request.to(),
+                request.amountPaise(),
+                idempotencyKey,
+                Constants.TRANSFER_DECLINED,
+                Instant.now(clock)
+        );
+        declined.setDeclinedReason(reason);
 
-        // update cache if available
-        cacheManager.ifPresent(cm -> {
-            Cache cache = cm.getCache("walletBalances");
-            if (cache != null) {
-                cache.put(fromWallet.getWalletId(), fromWallet.getBalancePaise());
-                cache.put(toWallet.getWalletId(), toWallet.getBalancePaise());
-                logger.debug("Updated cache balances for wallets {} and {}", fromWallet.getWalletId(), toWallet.getWalletId());
+        try {
+            logger.info("Persisting declined transfer for idempotencyKey={} due to insufficient balance", idempotencyKey);
+            return TransferMapper.toResponse(transferRepository.saveAndFlush(declined));
+        } catch (DataIntegrityViolationException ex) {
+            logger.info("Declined transfer insert conflict for idempotencyKey={}, fetching existing", idempotencyKey);
+            Optional<TransferEntity> existing = idempotencyService.findByIdempotencyKey(idempotencyKey);
+            if (existing.isPresent()) {
+                return TransferMapper.toResponse(existing.get());
             }
-        });
+            logger.error("Failed to save declined transfer and no existing transfer found for idempotencyKey={}", idempotencyKey, ex);
+            throw new ApiException(Constants.TRANSFER_CREATION_FAILED + ": failed to save declined transfer", HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+    }
 
+    private void applyTransferBalance(WalletEntity fromWallet, WalletEntity toWallet, long amountPaise) {
+        fromWallet.setBalancePaise(fromWallet.getBalancePaise() - amountPaise);
+        toWallet.setBalancePaise(toWallet.getBalancePaise() + amountPaise);
+        walletRepository.saveAll(List.of(fromWallet, toWallet));
+    }
+
+    private void cacheUpdatedWallets(WalletEntity fromWallet, WalletEntity toWallet) {
+//        TODO
+//        cacheManager.ifPresent(cm -> {
+//            Cache cache = cm.getCache("walletBalances");
+//            if (cache != null) {
+//                cache.put(fromWallet.getWalletId(), fromWallet.getBalancePaise());
+//                cache.put(toWallet.getWalletId(), toWallet.getBalancePaise());
+//                logger.debug("Updated cache balances for wallets {} and {}", fromWallet.getWalletId(), toWallet.getWalletId());
+//            }
+//        });
+    }
+
+    private TransferResponse saveCompletedTransfer(CreateTransferRequest request, String idempotencyKey) {
         TransferEntity transferEntity = new TransferEntity(
                 Constants.TRANSFER_ID_PREFIX + UUID.randomUUID(),
                 request.from(),
@@ -150,13 +185,17 @@ public class TransferServiceImpl implements TransferService {
 
         try {
             logger.info("Persisting completed transfer for idempotencyKey={}", idempotencyKey);
-            return TransferMapper.toResponse(transferRepository.saveAndFlush(transferEntity));
+            TransferResponse response = TransferMapper.toResponse(transferRepository.saveAndFlush(transferEntity));
+            walletMetricsService.incrementTransferCreated();
+            return response;
         } catch (DataIntegrityViolationException ex) {
-            logger.error("Failed to save completed transfer for idempotencyKey={}", idempotencyKey, ex);
+            logger.info("Completed transfer insert conflict for idempotencyKey={}, fetching existing", idempotencyKey);
             Optional<TransferEntity> existing = idempotencyService.findByIdempotencyKey(idempotencyKey);
             if (existing.isPresent()) {
+                walletMetricsService.incrementTransferCreated();
                 return TransferMapper.toResponse(existing.get());
             }
+            logger.error("Failed to save completed transfer and no existing transfer found for idempotencyKey={}", idempotencyKey, ex);
             throw new ApiException(Constants.TRANSFER_CREATION_FAILED + ": database error while creating transfer", HttpStatus.INTERNAL_SERVER_ERROR);
         }
     }

@@ -10,6 +10,8 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import jakarta.validation.ConstraintViolationException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -24,6 +26,22 @@ public class GlobalExceptionHandler {
     public ResponseEntity<Map<String, String>> handleValidationException(MethodArgumentNotValidException exception) {
         FieldError fieldError = exception.getBindingResult().getFieldError();
         String message = fieldError != null ? fieldError.getDefaultMessage() : Constants.VALIDATION_FAILED;
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(Map.of(Constants.MESSAGE, message));
+    }
+
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<Map<String, String>> handleHttpMessageNotReadable(HttpMessageNotReadableException exception) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(Map.of(Constants.MESSAGE, "Request body is missing or malformed"));
+    }
+
+    @ExceptionHandler(ConstraintViolationException.class)
+    public ResponseEntity<Map<String, String>> handleConstraintViolation(ConstraintViolationException exception) {
+        String message = exception.getConstraintViolations().stream()
+                .findFirst()
+                .map(cv -> cv.getMessage())
+                .orElse(Constants.VALIDATION_FAILED);
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(Map.of(Constants.MESSAGE, message));
     }

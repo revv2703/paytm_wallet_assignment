@@ -2,6 +2,7 @@ package com.paytm.wallet.api.controller;
 
 import com.paytm.wallet.common.dto.CreateTransferRequest;
 import com.paytm.wallet.common.dto.TransferResponse;
+import com.paytm.wallet.common.util.Constants;
 import com.paytm.wallet.service.transfer.TransferService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -29,7 +30,15 @@ public class TransferController {
     @PostMapping
     @Operation(summary = "Create a wallet transfer with idempotency protection")
     public ResponseEntity<TransferResponse> createTransfer(@Valid @RequestBody CreateTransferRequest request) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(transferService.createTransfer(request));
+        TransferResponse response = transferService.createTransfer(request);
+        if (Constants.TRANSFER_COMPLETED.equals(response.status())) {
+            return ResponseEntity.status(HttpStatus.CREATED).body(response);
+        }
+    if (Constants.TRANSFER_INSUFFICIENT_BALANCE.equals(response.declinedReason())) {
+            return ResponseEntity.status(HttpStatus.UNPROCESSABLE_CONTENT).body(response);
+        }
+        // For declined or other non-completed statuses, return 200 OK with the resource state
+        return ResponseEntity.ok(response);
     }
 
     @GetMapping("/{id}")
