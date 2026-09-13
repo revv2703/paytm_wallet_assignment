@@ -1,0 +1,3 @@
+INSERT INTO wallets (wallet_id, user_id, balance_paise, created_at)
+VALUES ('00000000-0000-0000-0000-000000000001', 'DEMO-USER', 10000, CURRENT_TIMESTAMP)
+ON CONFLICT (user_id) DO NOTHING;

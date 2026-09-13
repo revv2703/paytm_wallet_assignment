@@ -8,6 +8,7 @@ public record TransferResponse(
         @JsonProperty("to") String to,
         @JsonProperty("amount_paise") Long amountPaise,
         @JsonProperty("status") String status,
-        @JsonProperty("idempotency_key") String idempotencyKey
+        @JsonProperty("idempotency_key") String idempotencyKey,
+        @JsonProperty("declined_reason") String declinedReason
 ) {
 }

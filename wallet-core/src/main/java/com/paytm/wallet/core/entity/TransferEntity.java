@@ -29,6 +29,9 @@ public class TransferEntity {
     @Column(name = "status", nullable = false)
     private String status;
 
+    @Column(name = "declined_reason")
+    private String declinedReason;
+
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
@@ -91,6 +94,14 @@ public class TransferEntity {
 
     public void setStatus(String status) {
         this.status = status;
+    }
+
+    public String getDeclinedReason() {
+        return declinedReason;
+    }
+
+    public void setDeclinedReason(String declinedReason) {
+        this.declinedReason = declinedReason;
     }
 
     public Instant getCreatedAt() {
