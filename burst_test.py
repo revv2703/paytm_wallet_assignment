@@ -9,18 +9,20 @@ import urllib.error
 import urllib.request
 import uuid
 
-
 BASE_URL = os.getenv("BASE_URL", "http://localhost:8080").rstrip("/")
-
-WALLET_A = "WALLET_be946d1f-0230-4aa1-84f1-f53c40d72a6f"
-WALLET_B = "WALLET_76cff94b-f4e8-4bb8-a08d-6a23081b61d9"
 
 GET_OR_CREATE_COUNT = int(os.getenv("GET_OR_CREATE_COUNT", "50"))
 IDEMPOTENCY_COUNT = int(os.getenv("IDEMPOTENCY_COUNT", "50"))
 CONTENTION_COUNT = int(os.getenv("CONTENTION_COUNT", "200"))
 
+# Globals initialized dynamically
+WALLET_A = None
+WALLET_B = None
+TOKEN_A = None
+TOKEN_B = None
 
-def api_request(method, path, body=None, timeout=30):
+
+def api_request(method, path, body=None, token=None, timeout=30):
     url = f"{BASE_URL}{path}"
 
     headers = {
@@ -28,10 +30,16 @@ def api_request(method, path, body=None, timeout=30):
         "Content-Type": "application/json",
         "X-Correlation-ID": str(uuid.uuid4()),
     }
+    if token is not None:
+        headers["Authorization"] = f"Bearer {token}"
 
     encoded_body = None
     if body is not None:
-        encoded_body = json.dumps(body).encode("utf-8")
+        if isinstance(body, (int, float)):
+            encoded_body = str(body).encode("utf-8")
+            headers["Content-Type"] = "application/json"
+        else:
+            encoded_body = json.dumps(body).encode("utf-8")
 
     request = urllib.request.Request(
         url=url,
@@ -57,7 +65,7 @@ def api_request(method, path, body=None, timeout=30):
                 "elapsed_ms": round(
                     (time.perf_counter() - started) * 1000,
                     2,
-                    ),
+                ),
             }
 
     except urllib.error.HTTPError as error:
@@ -74,7 +82,7 @@ def api_request(method, path, body=None, timeout=30):
             "elapsed_ms": round(
                 (time.perf_counter() - started) * 1000,
                 2,
-                ),
+            ),
         }
 
     except Exception as error:
@@ -87,7 +95,7 @@ def api_request(method, path, body=None, timeout=30):
             "elapsed_ms": round(
                 (time.perf_counter() - started) * 1000,
                 2,
-                ),
+            ),
         }
 
 
@@ -101,50 +109,58 @@ def assert_http_success(result, operation):
 
 def wallet_id_from_response(result):
     body = result["body"]
-
     if isinstance(body, dict):
         return body.get("id") or body.get("wallet_id")
-
     return None
 
 
 def balance_from_response(result):
     body = result["body"]
-
     if isinstance(body, dict):
         if "balance_paise" in body:
             return int(body["balance_paise"])
-
         if "balance" in body:
             return int(body["balance"])
-
     raise AssertionError(
         f"Could not find balance_paise in response:\n"
         f"{json.dumps(result, indent=2, default=str)}"
     )
 
 
-def get_balance(wallet_id):
-    result = api_request("GET", f"/wallets/{wallet_id}")
+def get_token(user_id):
+    result = api_request("POST", "/auth/token", {"userId": user_id})
+    if result["status"] == 200:
+        return result["body"].get("token")
+    return None
+
+
+def get_balance(wallet_id, token):
+    result = api_request("GET", f"/wallets/{wallet_id}", token=token)
     assert_http_success(result, f"GET /wallets/{wallet_id}")
     return balance_from_response(result)
 
 
-def get_total_balance():
-    return get_balance(WALLET_A) + get_balance(WALLET_B)
-
-
-def create_wallet(user_id):
+def create_wallet(user_id, token):
     return api_request(
         "POST",
         "/wallets",
         {
             "user_id": user_id,
         },
+        token=token,
     )
 
 
-def create_transfer(from_wallet, to_wallet, amount_paise, key):
+def credit_wallet(wallet_id, amount_paise, token):
+    return api_request(
+        "POST",
+        f"/wallets/{wallet_id}/credit",
+        body=amount_paise,
+        token=token,
+    )
+
+
+def create_transfer(from_wallet, to_wallet, amount_paise, key, token):
     return api_request(
         "POST",
         "/transfers",
@@ -154,36 +170,33 @@ def create_transfer(from_wallet, to_wallet, amount_paise, key):
             "amount_paise": amount_paise,
             "idempotency_key": key,
         },
+        token=token,
     )
 
 
 def test_health():
     print("[0/3] Health check")
-
     result = api_request("GET", "/health")
-
     if result["status"] != 200:
         raise AssertionError(
             f"GET /health failed:\n"
             f"{json.dumps(result, indent=2, default=str)}"
         )
-
     print("PASS: /health returned 200")
 
 
 def test_concurrent_get_or_create():
     print("\n[1/3] Concurrent get-or-create")
-
     user_id = f"BURST-USER-{uuid.uuid4()}"
+    token = get_token(user_id)
 
     with concurrent.futures.ThreadPoolExecutor(
             max_workers=GET_OR_CREATE_COUNT
     ) as executor:
         futures = [
-            executor.submit(create_wallet, user_id)
+            executor.submit(create_wallet, user_id, token)
             for _ in range(GET_OR_CREATE_COUNT)
         ]
-
         results = [future.result() for future in futures]
 
     failures = [
@@ -195,7 +208,6 @@ def test_concurrent_get_or_create():
     if failures:
         print("First failed response:")
         print(json.dumps(failures[0], indent=2, default=str))
-
         raise AssertionError(
             f"Expected all {GET_OR_CREATE_COUNT} requests to return "
             f"200 or 201, got statuses: "
@@ -218,7 +230,6 @@ def test_concurrent_get_or_create():
         )
 
     wallet_id = next(iter(wallet_ids))
-
     print(
         f"PASS: {GET_OR_CREATE_COUNT} concurrent requests returned "
         f"one wallet: {wallet_id}"
@@ -228,8 +239,9 @@ def test_concurrent_get_or_create():
 def test_idempotency_retry_storm():
     print("\n[2/3] Idempotent retry storm")
 
-    before_a = get_balance(WALLET_A)
-    before_b = get_balance(WALLET_B)
+    # Fetch fresh balance of A and B
+    before_a = get_balance(WALLET_A, TOKEN_A)
+    before_b = get_balance(WALLET_B, TOKEN_B)
 
     amount = 100
     key = f"IDEMPOTENCY-{uuid.uuid4()}"
@@ -244,17 +256,18 @@ def test_idempotency_retry_storm():
                 WALLET_B,
                 amount,
                 key,
+                TOKEN_A,
             )
             for _ in range(IDEMPOTENCY_COUNT)
         ]
-
         results = [future.result() for future in futures]
 
     statuses = [result["status"] for result in results]
 
-    # A normal successful request returns 200/201.
-    # An idempotent duplicate may return 409.
-    # An unfunded transfer should return 422.
+    # Successful transfer returns 201.
+    # An idempotent duplicate may return 201 or 200.
+    # A duplicate request with conflict returns 409.
+    # An insufficient balance returns 422.
     allowed_statuses = (200, 201, 409, 422)
 
     unexpected = [
@@ -266,13 +279,12 @@ def test_idempotency_retry_storm():
     if unexpected:
         print("Unexpected response:")
         print(json.dumps(unexpected[0], indent=2, default=str))
-
         raise AssertionError(
             f"Unexpected idempotency statuses: {statuses}"
         )
 
-    after_a = get_balance(WALLET_A)
-    after_b = get_balance(WALLET_B)
+    after_a = get_balance(WALLET_A, TOKEN_A)
+    after_b = get_balance(WALLET_B, TOKEN_B)
 
     successful = [
         result
@@ -293,28 +305,22 @@ def test_idempotency_retry_storm():
     ]
 
     # Case 1: insufficient balance.
-    #
-    # The API must not overdraft Wallet A. The transaction should be
-    # declined and neither wallet balance should change.
     if before_a < amount:
         if after_a != before_a:
             raise AssertionError(
                 f"Wallet A changed despite insufficient funds: "
                 f"before={before_a}, after={after_a}"
             )
-
         if after_b != before_b:
             raise AssertionError(
                 f"Wallet B changed despite insufficient funds: "
                 f"before={before_b}, after={after_b}"
             )
-
         if successful:
             raise AssertionError(
                 "A transfer succeeded despite insufficient funds:\n"
                 f"{json.dumps(successful[0], indent=2, default=str)}"
             )
-
         if not declined:
             raise AssertionError(
                 "Expected at least one 422 declined response for "
@@ -325,45 +331,28 @@ def test_idempotency_retry_storm():
             f"PASS: transfer was declined because Wallet A has "
             f"{before_a} paise but needs {amount} paise"
         )
+        print(f"      declined responses: {len(declined)}")
+        print(f"      HTTP 409 responses: {len(conflicts)}")
+        print("PASS: balances remained unchanged and no overdraft occurred")
 
-        print(
-            f"      declined responses: {len(declined)}"
-        )
-
-        print(
-            f"      HTTP 409 responses: {len(conflicts)}"
-        )
-
-        print(
-            "PASS: balances remained unchanged and no overdraft occurred"
-        )
-
-        # Reusing the same key with a different request body must still
-        # be rejected as an idempotency conflict.
+        # Reusing the same key with a different body must still return 409
         conflict_result = create_transfer(
             WALLET_A,
             WALLET_B,
             amount + 1,
             key,
-            )
-
+            TOKEN_A,
+        )
         if conflict_result["status"] != 409:
             raise AssertionError(
                 "Reusing an idempotency key with a different body should "
                 f"return 409, got:\n"
                 f"{json.dumps(conflict_result, indent=2, default=str)}"
             )
-
-        print(
-            "PASS: same idempotency key with a different body returned 409"
-        )
-
+        print("PASS: same idempotency key with a different body returned 409")
         return
 
     # Case 2: sufficient balance.
-    #
-    # Exactly one transfer should be applied. Depending on the API
-    # contract, duplicate requests may return 200/201 or 409.
     if not successful:
         raise AssertionError(
             "Wallet A had sufficient funds, but no transfer succeeded. "
@@ -381,10 +370,10 @@ def test_idempotency_retry_storm():
         )
 
     response_ids = {
-        result["body"].get("id")
+        result["body"].get("id") or result["body"].get("transfer_id")
         for result in successful
         if isinstance(result["body"], dict)
-           and result["body"].get("id") is not None
+        and (result["body"].get("id") or result["body"].get("transfer_id")) is not None
     }
 
     if len(response_ids) != 1:
@@ -397,8 +386,8 @@ def test_idempotency_retry_storm():
         WALLET_B,
         amount + 1,
         key,
-        )
-
+        TOKEN_A,
+    )
     if conflict_result["status"] != 409:
         raise AssertionError(
             "Reusing an idempotency key with a different body should "
@@ -410,40 +399,34 @@ def test_idempotency_retry_storm():
         f"PASS: {IDEMPOTENCY_COUNT} concurrent requests caused "
         f"exactly one {amount}-paise transfer"
     )
-
-    print(
-        f"      successful responses: {len(successful)}"
-    )
-
-    print(
-        f"      HTTP 409 responses: {len(conflicts)}"
-    )
-
-    print(
-        "PASS: same idempotency key with a different body returned 409"
-    )
+    print(f"      successful responses: {len(successful)}")
+    print(f"      HTTP 409 responses: {len(conflicts)}")
+    print("PASS: same idempotency key with a different body returned 409")
 
 
 def test_conservation_under_contention():
     print("\n[3/3] Conservation under contention")
 
-    before_a = get_balance(WALLET_A)
-    before_b = get_balance(WALLET_B)
+    before_a = get_balance(WALLET_A, TOKEN_A)
+    before_b = get_balance(WALLET_B, TOKEN_B)
     before_total = before_a + before_b
 
     def submit_transfer(index):
         if index % 2 == 0:
             source = WALLET_A
             destination = WALLET_B
+            token = TOKEN_A
         else:
             source = WALLET_B
             destination = WALLET_A
+            token = TOKEN_B
 
         return create_transfer(
             source,
             destination,
             1,
             f"CONTENTION-{uuid.uuid4()}",
+            token,
         )
 
     with concurrent.futures.ThreadPoolExecutor(
@@ -453,11 +436,10 @@ def test_conservation_under_contention():
             executor.submit(submit_transfer, index)
             for index in range(CONTENTION_COUNT)
         ]
-
         results = [future.result() for future in futures]
 
-    after_a = get_balance(WALLET_A)
-    after_b = get_balance(WALLET_B)
+    after_a = get_balance(WALLET_A, TOKEN_A)
+    after_b = get_balance(WALLET_B, TOKEN_B)
     after_total = after_a + after_b
 
     if after_a < 0 or after_b < 0:
@@ -480,7 +462,6 @@ def test_conservation_under_contention():
     if unexpected:
         print("Unexpected contention response:")
         print(json.dumps(unexpected[0], indent=2, default=str))
-
         raise AssertionError(
             f"Unexpected contention status: {unexpected[0]['status']}"
         )
@@ -498,26 +479,42 @@ def test_conservation_under_contention():
     print(
         f"PASS: total remained {after_total} paise"
     )
-
     print(
         f"PASS: balances are non-negative: "
         f"A={after_a}, B={after_b}"
     )
-
-    print(
-        f"      successful transfers: {successful}"
-    )
-
-    print(
-        f"      declined/conflict responses: {declined}"
-    )
+    print(f"      successful transfers: {successful}")
+    print(f"      declined/conflict responses: {declined}")
 
 
 def main():
+    global WALLET_A, WALLET_B, TOKEN_A, TOKEN_B
     print(f"Testing API: {BASE_URL}\n")
 
     try:
         test_health()
+
+        print("\n[Setup] Dynamically initializing authenticated wallets A and B...")
+        user_a = f"BURST-USER-A-{uuid.uuid4()}"
+        user_b = f"BURST-USER-B-{uuid.uuid4()}"
+        TOKEN_A = get_token(user_a)
+        TOKEN_B = get_token(user_b)
+        
+        # Create wallets
+        res_a = create_wallet(user_a, TOKEN_A)
+        assert_http_success(res_a, f"Create Wallet A")
+        WALLET_A = wallet_id_from_response(res_a)
+        
+        res_b = create_wallet(user_b, TOKEN_B)
+        assert_http_success(res_b, f"Create Wallet B")
+        WALLET_B = wallet_id_from_response(res_b)
+        
+        # Seed balance to Wallet A (100000 paise)
+        credit_res = credit_wallet(WALLET_A, 100000, TOKEN_A)
+        assert_http_success(credit_res, f"Credit Wallet A")
+        
+        print(f"Setup complete: Wallet A ({WALLET_A}) and Wallet B ({WALLET_B}) successfully initialized & seeded.")
+
         test_concurrent_get_or_create()
         test_idempotency_retry_storm()
         test_conservation_under_contention()

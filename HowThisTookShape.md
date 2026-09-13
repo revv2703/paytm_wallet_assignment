@@ -45,3 +45,5 @@ use Java and Spring Boot for the backend, PostgreSQL for the database, and Redis
 
 not having a fun time dealing with concurrency issues :)
 maybe stop with the cache impl cause that seems to be introducing consistency issues, and just focus on the db for now, caching can be added later once the core functionality is stable and correct.
+
+dont have much time to create a dashboard(more like dont wanna build one) to consume the metrics api, might just use the spring-boot-admin dep, gives you a nice dash 

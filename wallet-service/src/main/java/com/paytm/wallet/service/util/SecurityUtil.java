@@ -11,13 +11,13 @@ public final class SecurityUtil {
     private SecurityUtil() {}
 
     public static String resolveUserId(CreateWalletRequest request) {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication != null && authentication.isAuthenticated() && !"anonymousUser".equals(authentication.getName())) {
+            return authentication.getName().trim();
+        }
         String userId = request != null ? request.userId() : null;
         if (userId == null || userId.isBlank()) {
-            Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-            if (authentication == null || !authentication.isAuthenticated() || "anonymousUser".equals(authentication.getName())) {
-                throw new ApiException("Authentication required", HttpStatus.UNAUTHORIZED);
-            }
-            userId = authentication.getName();
+            throw new ApiException("Authentication required", HttpStatus.UNAUTHORIZED);
         }
         return userId.trim();
     }

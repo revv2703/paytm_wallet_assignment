@@ -92,6 +92,14 @@ public class TransferServiceImpl implements TransferService {
                 throw new ApiException(Constants.WALLET_NOT_FOUND, HttpStatus.NOT_FOUND);
             }
 
+            String callerUserId = currentUserId();
+            if (!Objects.equals(fromWallet.getUserId(), callerUserId)) {
+                logger.warn("User {} attempted to unauthorizedly transfer from wallet {} belonging to user {}",
+                        callerUserId, fromWallet.getWalletId(), fromWallet.getUserId());
+                walletMetricsService.incrementTransferError();
+                throw new ApiException("You do not own the sender wallet", HttpStatus.FORBIDDEN);
+            }
+
             Optional<TransferEntity> existingTransfer = idempotencyService.findByIdempotencyKey(idempotencyKey);
             if (existingTransfer.isPresent()) {
                 logger.info("Existing transfer found for idempotencyKey={} after locking wallets", idempotencyKey);

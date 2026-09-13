@@ -5,16 +5,13 @@ import com.paytm.wallet.common.dto.WalletResponse;
 import com.paytm.wallet.common.exception.ApiException;
 import com.paytm.wallet.core.entity.WalletEntity;
 import com.paytm.wallet.core.repository.WalletRepository;
-import com.paytm.wallet.service.util.SecurityUtil;
 import com.paytm.wallet.service.mapper.WalletMapper;
+import com.paytm.wallet.service.util.SecurityUtil;
 import com.paytm.wallet.service.wallet.WalletService;
-import java.time.Clock;
-import java.time.Instant;
-import java.util.Optional;
-import java.util.UUID;
-import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.cache.Cache;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.cache.CacheManager;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -22,10 +19,12 @@ import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
-import static com.paytm.wallet.common.util.Constants.WALLET_ID_PREFIX;
+import java.time.Clock;
+import java.time.Instant;
+import java.util.Optional;
+import java.util.UUID;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import static com.paytm.wallet.common.util.Constants.WALLET_ID_PREFIX;
 
 @Service
 public class WalletServiceImpl implements WalletService {
@@ -37,7 +36,8 @@ public class WalletServiceImpl implements WalletService {
     private final Optional<CacheManager> cacheManager;
     private final TransactionTemplate transactionTemplate;
 
-    public WalletServiceImpl(WalletRepository walletRepository, Clock clock, Optional<CacheManager> cacheManager, PlatformTransactionManager transactionManager) {
+    public WalletServiceImpl(WalletRepository walletRepository, Clock clock, Optional<CacheManager> cacheManager,
+            PlatformTransactionManager transactionManager) {
         this.walletRepository = walletRepository;
         this.clock = clock;
         this.cacheManager = cacheManager;
@@ -106,17 +106,18 @@ public class WalletServiceImpl implements WalletService {
                 WALLET_ID_PREFIX + UUID.randomUUID(),
                 userId,
                 0L,
-                Instant.now(clock)
-        );
+                Instant.now(clock));
     }
 
     private void cacheWalletBalance(WalletEntity wallet) {
-        cacheManager.ifPresent(cm -> {
-            Cache cache = cm.getCache("walletBalances");
-            if (cache != null) {
-                cache.put(wallet.getWalletId(), wallet.getBalancePaise());
-                logger.debug("Cached balance for walletId={} with value={}", wallet.getWalletId(), wallet.getBalancePaise());
-            }
-        });
+//        TODO
+//        cacheManager.ifPresent(cm -> {
+//            Cache cache = cm.getCache("walletBalances");
+//            if (cache != null) {
+//                cache.put(wallet.getWalletId(), wallet.getBalancePaise());
+//                logger.debug("Cached balance for walletId={} with value={}", wallet.getWalletId(), wallet.getBalancePaise());
+//            }
+//        });
     }
+
 }

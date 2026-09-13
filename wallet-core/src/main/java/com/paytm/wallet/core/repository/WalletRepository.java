@@ -18,6 +18,10 @@ public interface WalletRepository extends JpaRepository<WalletEntity, String> {
     Optional<WalletEntity> findByWalletId(String walletId);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @Query("select w from WalletEntity w where w.walletId in :ids")
+    @Query("select w from WalletEntity w where w.walletId = :walletId")
+    Optional<WalletEntity> findByWalletIdForUpdate(@Param("walletId") String walletId);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select w from WalletEntity w where w.walletId in :ids order by w.walletId asc")
     List<WalletEntity> findAllByWalletIdInForUpdate(@Param("ids") List<String> ids);
 }
