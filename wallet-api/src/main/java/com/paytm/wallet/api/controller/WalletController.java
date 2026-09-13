@@ -3,6 +3,8 @@ package com.paytm.wallet.api.controller;
 import com.paytm.wallet.common.dto.CreateWalletRequest;
 import com.paytm.wallet.common.dto.WalletResponse;
 import com.paytm.wallet.service.wallet.WalletService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -15,6 +17,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/wallets")
+@Tag(name = "Wallets", description = "Wallet create and lookup APIs")
 public class WalletController {
 
     private final WalletService walletService;
@@ -24,11 +27,13 @@ public class WalletController {
     }
 
     @PostMapping
+    @Operation(summary = "Create or fetch a wallet for a user")
     public ResponseEntity<WalletResponse> createOrGetWallet(@Valid @RequestBody CreateWalletRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED).body(walletService.createOrGetWallet(request));
     }
 
     @GetMapping("/{id}")
+    @Operation(summary = "Fetch wallet balance by wallet id")
     public ResponseEntity<WalletResponse> getWallet(@PathVariable String id) {
         return ResponseEntity.ok(walletService.getWallet(id));
     }
