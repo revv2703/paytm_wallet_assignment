@@ -2,7 +2,7 @@
 
 A minimal wallet and peer-to-peer transfer service scaffold aligned to the Paytm PML R2 Agentic Exercise.
 
-### All you need
+## All you need
 http://localhost:8080/swagger-ui/index.html
 
 ## Architecture
@@ -20,7 +20,7 @@ The project is organized by responsibility:
 - Spring Boot 4
 - Maven
 - PostgreSQL
-- Redis
+- Redis(meh)
 - Docker Compose
 
 ## Local development
@@ -41,9 +41,9 @@ The project is organized by responsibility:
 
 
 # TO DO
-- [ ] add loggers and proper error handling
-- [ ] add integration tests
+- [x] add loggers and proper error handling
+- [x] add integration tests
 - [ ] maybe add an immutable ledger
 - [ ] handle correlation ids for tracing requests across services
-- [ ] create a dashboard to display request rate, latency p99, error rate, plus **domain counters** (transfers created / declined-insufficient-funds / idempotent-replays)
-- [ ] add authentication and authorization
+- [x] create a dashboard to display request rate, latency p99, error rate, plus **domain counters** (transfers created / declined-insufficient-funds / idempotent-replays)
+- [x] add authentication and authorization

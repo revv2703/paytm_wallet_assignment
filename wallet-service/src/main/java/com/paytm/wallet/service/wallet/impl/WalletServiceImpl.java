@@ -62,7 +62,7 @@ public class WalletServiceImpl implements WalletService {
                 return walletRepository.saveAndFlush(newWallet);
             });
             if (created != null) {
-                cacheWalletBalance(created);
+//                cacheWalletBalance(created);
                 return WalletMapper.toResponse(created);
             }
         } catch (DataIntegrityViolationException ex) {
@@ -71,7 +71,7 @@ public class WalletServiceImpl implements WalletService {
 
         WalletEntity reloaded = walletRepository.findByUserId(userId)
                 .orElseThrow(() -> new ApiException("Unable to create wallet for user: " + userId, HttpStatus.INTERNAL_SERVER_ERROR));
-        cacheWalletBalance(reloaded);
+//        cacheWalletBalance(reloaded);
         return WalletMapper.toResponse(reloaded);
     }
 
@@ -85,7 +85,7 @@ public class WalletServiceImpl implements WalletService {
         WalletEntity wallet = walletRepository.findByWalletId(id)
                 .orElseThrow(() -> new ApiException("Wallet not found", HttpStatus.NOT_FOUND));
 
-        cacheWalletBalance(wallet);
+//        cacheWalletBalance(wallet);
         return WalletMapper.toResponse(wallet);
     }
 
@@ -97,7 +97,8 @@ public class WalletServiceImpl implements WalletService {
 
         wallet.setBalancePaise(wallet.getBalancePaise() + amountPaise);
         WalletEntity saved = walletRepository.saveAndFlush(wallet);
-        cacheWalletBalance(saved);
+//        cacheWalletBalance(saved);
+        logger.info("Credited walletId={} with amountPaise={}, new balance={}", walletId, amountPaise, saved.getBalancePaise());
         return WalletMapper.toResponse(saved);
     }
 
