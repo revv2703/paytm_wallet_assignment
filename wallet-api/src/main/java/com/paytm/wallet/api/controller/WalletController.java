@@ -37,4 +37,10 @@ public class WalletController {
     public ResponseEntity<WalletResponse> getWallet(@PathVariable String id) {
         return ResponseEntity.ok(walletService.getWallet(id));
     }
+
+    @PostMapping("/{id}/credit")
+    @Operation(summary = "Credit wallet balance by wallet id")
+    public ResponseEntity<WalletResponse> creditWallet(@PathVariable String id, @RequestBody long amount) {
+        return ResponseEntity.ok(walletService.creditWallet(id, amount));
+    }
 }

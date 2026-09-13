@@ -68,5 +68,15 @@ public class WalletServiceImpl implements WalletService {
         return WalletMapper.toResponse(wallet);
     }
 
+    @Override
+    @Transactional
+    public WalletResponse creditWallet(String walletId, long amountPaise) {
+        WalletEntity wallet = walletRepository.findByWalletId(walletId)
+                .orElseThrow(() -> new ApiException("Wallet not found", HttpStatus.NOT_FOUND));
+
+        wallet.setBalancePaise(wallet.getBalancePaise() + amountPaise);
+        return WalletMapper.toResponse(walletRepository.saveAndFlush(wallet));
+    }
+
 
 }

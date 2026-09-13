@@ -8,4 +8,6 @@ public interface WalletService {
     WalletResponse createOrGetWallet(CreateWalletRequest request);
 
     WalletResponse getWallet(String id);
+
+    WalletResponse creditWallet(String walletId, long amountPaise);
 }
