@@ -9,7 +9,7 @@ import urllib.error
 import urllib.request
 import uuid
 
-BASE_URL = os.getenv("BASE_URL", "http://localhost:8080").rstrip("/")
+BASE_URL = os.getenv("BASE_URL", "https://paytmwalletassignment-production.up.railway.app").rstrip("/")
 
 GET_OR_CREATE_COUNT = int(os.getenv("GET_OR_CREATE_COUNT", "50"))
 IDEMPOTENCY_COUNT = int(os.getenv("IDEMPOTENCY_COUNT", "50"))
